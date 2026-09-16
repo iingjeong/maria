@@ -126,7 +126,7 @@ public class InboundServiceImpl implements InboundService {
 
         List<RegistrableStockResponseDTO> lots =
                 fetchRegistrableStockLots(ciHash, foreignProductId);
-        Map<Long, BigDecimal> alreadyApprovedByLot =
+        Map<Long, BigDecimal> remainingAlreadyUsedByAccount =
                 inboundMapper
                         .sumApprovedQtyBySourceGeneralAccount(accountId, foreignProductId)
                         .stream()
@@ -138,13 +138,20 @@ public class InboundServiceImpl implements InboundService {
         BigDecimal remaining = approvedQty;
         boolean anyDetailCreated = false;
         for (RegistrableStockResponseDTO lot : lots) {
+            Long generalAccountId = lot.getGeneralAccountId();
+            BigDecimal alreadyUsed =
+                    remainingAlreadyUsedByAccount.getOrDefault(generalAccountId, BigDecimal.ZERO);
+            // 같은 general_account의 lot이 여러 개일 때 alreadyUsed를 lot마다 중복
+            // 차감하지 않도록, 이번 lot에서 실제로 소진한 만큼만 계좌 잔여분에서 빼고
+            // 남은 alreadyUsed는 다음 lot으로 이월한다.
+            BigDecimal consumedByThisLot = alreadyUsed.min(lot.getHeldQty());
+            remainingAlreadyUsedByAccount.put(
+                    generalAccountId, alreadyUsed.subtract(consumedByThisLot));
+            BigDecimal lotAvailable = lot.getHeldQty().subtract(consumedByThisLot);
+
             BigDecimal lotQty = BigDecimal.ZERO;
-            if (remaining.compareTo(BigDecimal.ZERO) > 0) {
-                BigDecimal alreadyUsed =
-                        alreadyApprovedByLot.getOrDefault(
-                                lot.getGeneralAccountId(), BigDecimal.ZERO);
-                BigDecimal lotAvailable =
-                        lot.getHeldQty().subtract(alreadyUsed).max(BigDecimal.ZERO);
+            if (remaining.compareTo(BigDecimal.ZERO) > 0
+                    && lotAvailable.compareTo(BigDecimal.ZERO) > 0) {
                 lotQty = remaining.min(lotAvailable);
             }
 
