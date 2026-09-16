@@ -33,6 +33,7 @@ import com.app.maria.domain.inbound.dto.response.InboundResponseDTO;
 import com.app.maria.domain.inbound.dto.response.InboundSummaryResponseDTO;
 import com.app.maria.domain.inbound.exception.InboundNotFoundException;
 import com.app.maria.domain.inbound.mapper.InboundMapper;
+import com.app.maria.domain.inbound.type.InboundZeroApprovalReason;
 import com.app.maria.domain.registrablestock.dto.RegistrableStockResponseDTO;
 import com.app.maria.domain.registrablestock.type.GeneralAccountType;
 import com.app.maria.domain.sellorder.dto.SellOrderDTO;
@@ -187,6 +188,8 @@ class InboundServiceImplTest {
                         request(BigDecimal.valueOf(50), BigDecimal.valueOf(90)));
 
         assertThat(result.getApprovedQty()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(result.getZeroApprovalReason())
+                .isEqualTo(InboundZeroApprovalReason.SNAPSHOT_QUANTITY_EXHAUSTED);
     }
 
     @Test
@@ -359,11 +362,28 @@ class InboundServiceImplTest {
         ArgumentCaptor<InboundDetailDTO> captor = ArgumentCaptor.forClass(InboundDetailDTO.class);
 
         // currentHoldingAtRequest = 0 -> approvedQty = 0 (반려)이어도 lot 1건은 기록돼야 함
-        inboundService.processInbound(request(BigDecimal.valueOf(80), BigDecimal.ZERO));
+        InboundResponseDTO result =
+                inboundService.processInbound(request(BigDecimal.valueOf(80), BigDecimal.ZERO));
 
         verify(inboundMapper, times(1)).insertInboundDetail(captor.capture());
         assertThat(captor.getValue().getQty()).isEqualByComparingTo(BigDecimal.ZERO);
         assertThat(captor.getValue().getSourceGeneralAccountId()).isEqualTo(10L);
+        assertThat(result.getZeroApprovalReason())
+                .isEqualTo(InboundZeroApprovalReason.CURRENT_HOLDING_INSUFFICIENT);
+    }
+
+    @Test
+    void processInboundReturnsRequestedZeroReasonWhenRequestedQtyIsZero() {
+        stubRegistrableStock(BigDecimal.valueOf(100));
+        when(inboundMapper.sumApprovedQtyByAccountAndProduct(ACCOUNT_ID, FOREIGN_PRODUCT_ID))
+                .thenReturn(BigDecimal.ZERO);
+
+        InboundResponseDTO result =
+                inboundService.processInbound(request(BigDecimal.ZERO, BigDecimal.valueOf(90)));
+
+        assertThat(result.getApprovedQty()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(result.getZeroApprovalReason())
+                .isEqualTo(InboundZeroApprovalReason.REQUESTED_ZERO);
     }
 
     @Test
