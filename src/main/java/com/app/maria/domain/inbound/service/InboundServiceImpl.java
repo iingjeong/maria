@@ -10,6 +10,7 @@ import com.app.maria.domain.inbound.dto.request.InboundRequestDTO;
 import com.app.maria.domain.inbound.dto.response.*;
 import com.app.maria.domain.inbound.exception.InboundNotFoundException;
 import com.app.maria.domain.inbound.mapper.InboundMapper;
+import com.app.maria.domain.inbound.type.InboundZeroApprovalReason;
 import com.app.maria.domain.registrablestock.dto.RegistrableStockResponseDTO;
 import com.app.maria.domain.sellorder.dto.SellOrderDTO;
 import com.app.maria.domain.sellorder.mapper.SellOrderMapper;
@@ -101,6 +102,18 @@ public class InboundServiceImpl implements InboundService {
             approvedQty = approvedQty.min(currentHoldingAtRequest);
         }
 
+        InboundZeroApprovalReason zeroApprovalReason = null;
+        if (approvedQty.compareTo(BigDecimal.ZERO) == 0) {
+            if (requestedQty.compareTo(BigDecimal.ZERO) == 0) {
+                zeroApprovalReason = InboundZeroApprovalReason.REQUESTED_ZERO;
+            } else if (availableQty.compareTo(BigDecimal.ZERO) <= 0) {
+                zeroApprovalReason = InboundZeroApprovalReason.SNAPSHOT_QUANTITY_EXHAUSTED;
+            } else if (currentHoldingAtRequest != null
+                    && currentHoldingAtRequest.compareTo(BigDecimal.ZERO) <= 0) {
+                zeroApprovalReason = InboundZeroApprovalReason.CURRENT_HOLDING_INSUFFICIENT;
+            }
+        }
+
         InboundDTO inboundDTO =
                 InboundDTO.builder()
                         .accountId(accountId)
@@ -161,7 +174,7 @@ public class InboundServiceImpl implements InboundService {
                     snapshotQty);
         }
 
-        return InboundResponseDTO.of(inboundDTO, snapshotQty);
+        return InboundResponseDTO.of(inboundDTO, snapshotQty, zeroApprovalReason);
     }
 
     @Override
