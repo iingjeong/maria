@@ -89,8 +89,7 @@ $(function () {
     }
 
     function canProcessClosure() {
-        var admin = MARIA.auth.currentAdmin();
-        return !!admin && (admin.role === "ADMIN" || admin.role === "REVIEWER");
+        return MARIA.auth.hasRole("REVIEWER");
     }
 
     function errorMessage(xhr, fallback) {
@@ -809,8 +808,11 @@ $(function () {
         });
     });
 
-    loadBusinessToday().done(function () {
-        renderSummary();
+    // 인증 정보가 준비된 뒤 보호 데이터를 조회하고 역할별 UI를 렌더링한다.
+    MARIA.auth.requireAuth().done(function () {
+        loadBusinessToday().done(function () {
+            renderSummary();
+        });
+        loadAccounts();
     });
-    loadAccounts();
 });
