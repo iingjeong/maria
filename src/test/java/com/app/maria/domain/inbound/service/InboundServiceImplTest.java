@@ -353,6 +353,36 @@ class InboundServiceImplTest {
     }
 
     @Test
+    void processInboundAppliesAlreadyUsedOnceAcrossMultipleLotsInSameGeneralAccount() {
+        RegistrableStockResponseDTO firstLot =
+                lot(10L, BigDecimal.valueOf(40), LocalDateTime.of(2026, 1, 5, 9, 0));
+        RegistrableStockResponseDTO secondLot =
+                lot(10L, BigDecimal.valueOf(30), LocalDateTime.of(2026, 2, 10, 9, 0));
+        stubRegistrableStockLots(BigDecimal.valueOf(100), List.of(firstLot, secondLot));
+        when(inboundMapper.sumApprovedQtyByAccountAndProduct(ACCOUNT_ID, FOREIGN_PRODUCT_ID))
+                .thenReturn(BigDecimal.ZERO);
+        when(inboundMapper.sumApprovedQtyBySourceGeneralAccount(ACCOUNT_ID, FOREIGN_PRODUCT_ID))
+                .thenReturn(
+                        List.of(
+                                SourceLotApprovedQtyDTO.builder()
+                                        .generalAccountId(10L)
+                                        .approvedQty(BigDecimal.valueOf(20))
+                                        .build()));
+        ArgumentCaptor<InboundDetailDTO> captor = ArgumentCaptor.forClass(InboundDetailDTO.class);
+
+        // 같은 general_account(10L)에 lot 2개(40+30=70 보유), 이미 20 승인됨 -> 실제 잔여는 70-20=50
+        // (버그 있었을 때는 alreadyUsed 20이 각 lot에서 중복 차감돼 lot1=20, lot2=10만 잡혀 총 30만 승인됨)
+        inboundService.processInbound(request(BigDecimal.valueOf(50), BigDecimal.valueOf(90)));
+
+        verify(inboundMapper, times(2)).insertInboundDetail(captor.capture());
+        List<InboundDetailDTO> details = captor.getAllValues();
+        assertThat(details.get(0).getSourceGeneralAccountId()).isEqualTo(10L);
+        assertThat(details.get(0).getQty()).isEqualByComparingTo(BigDecimal.valueOf(20));
+        assertThat(details.get(1).getSourceGeneralAccountId()).isEqualTo(10L);
+        assertThat(details.get(1).getQty()).isEqualByComparingTo(BigDecimal.valueOf(30));
+    }
+
+    @Test
     void processInboundCreatesSingleZeroQtyDetailWhenApprovedQtyIsZero() {
         RegistrableStockResponseDTO irpLot =
                 lot(10L, BigDecimal.valueOf(40), LocalDateTime.of(2026, 1, 5, 9, 0));
