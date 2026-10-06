@@ -1,6 +1,10 @@
 package com.app.maria.domain.targetproduct.mapper;
 
-import com.app.maria.domain.targetproduct.dto.*;
+import com.app.maria.domain.targetproduct.dto.TargetProductJudgementDTO;
+import com.app.maria.domain.targetproduct.dto.TargetProductJudgementFailureDTO;
+import com.app.maria.domain.targetproduct.dto.TargetProductJudgementListDTO;
+import com.app.maria.domain.targetproduct.dto.TargetProductSearchDTO;
+import com.app.maria.domain.targetproduct.dto.TargetProductSummaryDTO;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -26,4 +30,6 @@ public interface TargetProductMapper {
 
     TargetProductSummaryDTO selectSummary(
             @Param("today") LocalDate today, @Param("tomorrow") LocalDate tomorrow);
+
+    void deleteFailureByMydataTradeId(Long mydataTradeId);
 }

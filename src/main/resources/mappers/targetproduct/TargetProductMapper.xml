@@ -30,12 +30,16 @@
         INSERT INTO target_product_judgement_failure
         (mydata_trade_id, ci_hash, trade_date, failure_count, last_error, first_failed_at, last_failed_at)
         VALUES
-        (#{mydataTradeId}, #{ciHash}, #{tradeDate}, #{failureCount}, #{lastError}, #{firstFailedAt}, #{lastFailedAt})
+        (#{mydataTradeId}, #{ciHash}, #{tradeDate}, 1, #{lastError}, #{firstFailedAt}, #{lastFailedAt})
         ON DUPLICATE KEY UPDATE
-        failure_count = #{failureCount},
+        failure_count = failure_count + 1,
         last_error = #{lastError},
         last_failed_at = #{lastFailedAt}
     </insert>
+
+    <delete id="deleteFailureByMydataTradeId">
+        DELETE FROM target_product_judgement_failure WHERE mydata_trade_id = #{mydataTradeId}
+    </delete>
 
     <select id="selectJudgements" parameterType="TargetProductSearchDTO" resultType="TargetProductJudgementListDTO">
         SELECT
