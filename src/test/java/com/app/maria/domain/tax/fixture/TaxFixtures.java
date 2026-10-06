@@ -1,6 +1,7 @@
 package com.app.maria.domain.tax.fixture;
 
 import com.app.maria.domain.tax.dto.ExternalBuyDTO;
+import com.app.maria.domain.tax.dto.HeldLotDTO;
 import com.app.maria.domain.tax.dto.SellLotDTO;
 import com.app.maria.domain.tax.dto.TaxRuleDTO;
 import com.app.maria.domain.tax.type.TaxRuleType;
@@ -62,14 +63,34 @@ public final class TaxFixtures {
                 .build();
     }
 
+    public static HeldLotDTO heldLot(
+            String ticker,
+            String market,
+            String currency,
+            String purchasePrice,
+            String purchaseFxRate,
+            String currentQty) {
+        return HeldLotDTO.builder()
+                .inboundDetailId(1L)
+                .foreignProductId(1L)
+                .ticker(ticker)
+                .market(market)
+                .currency(currency)
+                .purchasePrice(new BigDecimal(purchasePrice))
+                .purchaseFxRate(new BigDecimal(purchaseFxRate))
+                .currentQty(new BigDecimal(currentQty))
+                .productLabel(ticker)
+                .build();
+    }
+
     public static SellLotDTO lot(
-            LocalDate sellAt,
+            LocalDate finalAt,
             String finalAmount,
             String purchasePrice,
             String purchaseFxRate,
             String sellQty) {
         return SellLotDTO.builder()
-                .sellAt(sellAt)
+                .finalAt(finalAt)
                 .finalAmount(new BigDecimal(finalAmount))
                 .purchasePrice(new BigDecimal(purchasePrice))
                 .purchaseFxRate(new BigDecimal(purchaseFxRate))

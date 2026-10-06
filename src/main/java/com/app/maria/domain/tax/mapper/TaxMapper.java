@@ -1,6 +1,7 @@
 package com.app.maria.domain.tax.mapper;
 
 import com.app.maria.domain.tax.dto.ExternalBuyDTO;
+import com.app.maria.domain.tax.dto.HeldLotDTO;
 import com.app.maria.domain.tax.dto.SellLotDTO;
 import com.app.maria.domain.tax.dto.TaxCalculationDTO;
 import com.app.maria.domain.tax.dto.TaxRuleDTO;
@@ -13,14 +14,14 @@ import org.apache.ibatis.annotations.Param;
 
 @Mapper
 public interface TaxMapper {
-    List<SellLotDTO> findFinalizedLotsByAccountIdsAndYear(
+    List<SellLotDTO> selectFinalizedLotsByAccountIdsAndYear(
             @Param("accountIds") List<Long> accountIds,
             @Param("year") int year,
             @Param("calcBaseTime") LocalDateTime calcBaseTime);
 
-    List<TaxRuleDTO> findTaxRules();
+    List<TaxRuleDTO> selectTaxRules();
 
-    List<ExternalBuyDTO> findExternalBuysByAccountIdsAndYear(
+    List<ExternalBuyDTO> selectExternalBuysByAccountIdsAndYear(
             @Param("accountIds") List<Long> accountIds,
             @Param("year") int year,
             @Param("calcBaseTime") LocalDateTime calcBaseTime);
@@ -30,5 +31,14 @@ public interface TaxMapper {
     boolean existsByAccountAndBasis(
             @Param("accountId") Long accountId, @Param("basisType") TaxBasisType basisType);
 
-    Optional<TaxCalculationDTO> findLatestCalculation(@Param("accountId") Long accountId);
+    Optional<TaxCalculationDTO> selectLatestCalculation(@Param("accountId") Long accountId);
+
+    List<HeldLotDTO> selectHeldLotsByAccountId(@Param("accountId") Long accountId);
+
+    int countUnconfirmedFinalReport();
+
+    int countUnprocessedClawback();
+
+    int countBenefitChangedSince(
+            @Param("since") LocalDateTime since, @Param("until") LocalDateTime until);
 }
