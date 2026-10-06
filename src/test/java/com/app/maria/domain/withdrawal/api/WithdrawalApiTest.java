@@ -14,12 +14,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.app.maria.domain.withdrawal.dto.response.WithdrawalAllocationResponseDTO;
 import com.app.maria.domain.withdrawal.dto.response.WithdrawalDetailResponseDTO;
 import com.app.maria.domain.withdrawal.dto.response.WithdrawalListResponseDTO;
-import com.app.maria.domain.withdrawal.exception.WithdrawalNotFoundException;
-import com.app.maria.domain.withdrawal.service.WithdrawalQueryService;
 import com.app.maria.domain.withdrawal.service.WithdrawalService;
 import com.app.maria.domain.withdrawal.type.WithdrawalStatus;
 import com.app.maria.domain.withdrawal.type.WithdrawalType;
 import com.app.maria.global.config.SecurityConfig;
+import com.app.maria.global.error.AppException;
+import com.app.maria.global.error.ErrorType;
 import com.app.maria.global.jwt.JwtTokenProvider;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -40,7 +40,6 @@ import org.springframework.test.web.servlet.MockMvc;
 class WithdrawalApiTest {
     @Autowired private MockMvc mockMvc;
 
-    @MockitoBean private WithdrawalQueryService withdrawalQueryService;
     @MockitoBean private WithdrawalService withdrawalService;
     @MockitoBean private JwtTokenProvider jwtTokenProvider;
 
@@ -80,7 +79,7 @@ class WithdrawalApiTest {
                         .maturedPrincipalAmount(new BigDecimal("300"))
                         .immaturePrincipalAmount(new BigDecimal("400"))
                         .build();
-        when(withdrawalQueryService.getWithdrawals(WithdrawalStatus.COMPLETED))
+        when(withdrawalService.getWithdrawals(WithdrawalStatus.COMPLETED))
                 .thenReturn(List.of(response));
 
         mockMvc.perform(get("/api/admin/withdrawals").param("status", "COMPLETED"))
@@ -90,7 +89,7 @@ class WithdrawalApiTest {
                 .andExpect(jsonPath("$.data[0].requestedAmount").value(800))
                 .andExpect(jsonPath("$.data[0].immaturePrincipalAmount").value(400));
 
-        verify(withdrawalQueryService).getWithdrawals(WithdrawalStatus.COMPLETED);
+        verify(withdrawalService).getWithdrawals(WithdrawalStatus.COMPLETED);
     }
 
     @Test
@@ -114,7 +113,7 @@ class WithdrawalApiTest {
                         .earlyWithdrawal(true)
                         .allocations(List.of(allocation))
                         .build();
-        when(withdrawalQueryService.getWithdrawal(10L)).thenReturn(response);
+        when(withdrawalService.getWithdrawal(10L)).thenReturn(response);
 
         mockMvc.perform(get("/api/admin/withdrawals/10"))
                 .andExpect(status().isOk())
@@ -145,7 +144,7 @@ class WithdrawalApiTest {
                         .status(WithdrawalStatus.FAILED)
                         .requestedAmount(new BigDecimal("900"))
                         .build();
-        when(withdrawalQueryService.getWithdrawalsByAccountId(1L))
+        when(withdrawalService.getWithdrawalsByAccountId(1L))
                 .thenReturn(List.of(completed, failed));
 
         mockMvc.perform(get("/api/admin/withdrawals/accounts/1"))
@@ -153,7 +152,7 @@ class WithdrawalApiTest {
                 .andExpect(jsonPath("$.data[0].status").value("COMPLETED"))
                 .andExpect(jsonPath("$.data[1].status").value("FAILED"));
 
-        verify(withdrawalQueryService).getWithdrawalsByAccountId(1L);
+        verify(withdrawalService).getWithdrawalsByAccountId(1L);
     }
 
     @Test
@@ -164,8 +163,8 @@ class WithdrawalApiTest {
 
     @Test
     void missingWithdrawalReturnsNotFound() throws Exception {
-        when(withdrawalQueryService.getWithdrawal(99L))
-                .thenThrow(new WithdrawalNotFoundException("인출 내역을 찾을 수 없습니다."));
+        when(withdrawalService.getWithdrawal(99L))
+                .thenThrow(new AppException(ErrorType.WITHDRAWAL_NOT_FOUND));
 
         mockMvc.perform(get("/api/admin/withdrawals/99"))
                 .andExpect(status().isNotFound())

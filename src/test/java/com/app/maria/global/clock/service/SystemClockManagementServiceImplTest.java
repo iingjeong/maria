@@ -6,13 +6,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 import com.app.maria.global.audit.dto.AuditLogDTO;
-import com.app.maria.global.audit.exception.AuditLogInsertException;
 import com.app.maria.global.audit.service.AuditLogService;
 import com.app.maria.global.clock.dto.SystemClockDTO;
 import com.app.maria.global.clock.dto.request.SystemClockChangeRequestDTO;
-import com.app.maria.global.clock.exception.SystemClockNotInitializedException;
-import com.app.maria.global.clock.exception.SystemClockUpdateException;
 import com.app.maria.global.clock.mapper.SystemClockMapper;
+import com.app.maria.global.error.AppException;
+import com.app.maria.global.error.ErrorType;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -43,8 +42,8 @@ class SystemClockManagementServiceImplTest {
                                         request(
                                                 LocalDateTime.of(2027, 8, 5, 9, 0),
                                                 "DEMO_TIME_CHANGE")))
-                .isInstanceOf(SystemClockNotInitializedException.class)
-                .hasMessage("SYSTEM_CLOCK 데이터가 존재하지 않습니다.");
+                .isInstanceOf(AppException.class)
+                .hasMessage(ErrorType.SYSTEM_CLOCK_NOT_INITIALIZED.getMessage());
 
         verify(systemClockMapper).selectSystemClock();
         verify(systemClockMapper, never())
@@ -126,8 +125,8 @@ class SystemClockManagementServiceImplTest {
                         () ->
                                 systemClockManagementService.changeSystemTime(
                                         1L, request(newDatetime, "DEMO_TIME_CHANGE")))
-                .isInstanceOf(SystemClockUpdateException.class)
-                .hasMessage("다른 관리자가 업무시각을 먼저 변경했습니다. 다시 조회해 주세요.");
+                .isInstanceOf(AppException.class)
+                .hasMessage(ErrorType.SYSTEM_CLOCK_UPDATE_CONFLICT.getMessage());
 
         verify(systemClockMapper).updateSystemClock(newDatetime, currentDatetime);
         verifyNoInteractions(auditLogService);
@@ -144,7 +143,7 @@ class SystemClockManagementServiceImplTest {
                                 new SystemClockDTO(
                                         1L, currentDatetime, currentDatetime, currentDatetime)));
         when(systemClockMapper.updateSystemClock(newDatetime, currentDatetime)).thenReturn(1);
-        doThrow(new AuditLogInsertException("AUDIT_LOG 저장에 실패했습니다."))
+        doThrow(new AppException(ErrorType.AUDIT_LOG_INSERT_FAILED))
                 .when(auditLogService)
                 .log(any(AuditLogDTO.class));
 
@@ -152,8 +151,8 @@ class SystemClockManagementServiceImplTest {
                         () ->
                                 systemClockManagementService.changeSystemTime(
                                         1L, request(newDatetime, "DEMO_TIME_CHANGE")))
-                .isInstanceOf(AuditLogInsertException.class)
-                .hasMessage("AUDIT_LOG 저장에 실패했습니다.");
+                .isInstanceOf(AppException.class)
+                .hasMessage(ErrorType.AUDIT_LOG_INSERT_FAILED.getMessage());
 
         verify(systemClockMapper).updateSystemClock(newDatetime, currentDatetime);
         verify(auditLogService).log(any(AuditLogDTO.class));

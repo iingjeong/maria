@@ -4,8 +4,6 @@ import static com.app.maria.global.client.generalaccount.type.GeneralAccountStat
 
 import com.app.maria.domain.account.dto.AccountBenefitLogDTO;
 import com.app.maria.domain.account.dto.AccountDTO;
-import com.app.maria.domain.account.exception.AccountException;
-import com.app.maria.domain.account.exception.AccountNotFoundException;
 import com.app.maria.domain.account.mapper.AccountBenefitLogMapper;
 import com.app.maria.domain.account.mapper.AccountMapper;
 import com.app.maria.domain.account.type.BenefitType;
@@ -13,12 +11,9 @@ import com.app.maria.domain.account.type.Status;
 import com.app.maria.domain.withdrawal.dto.LeftAmountDTO;
 import com.app.maria.domain.withdrawal.dto.WithdrawalAllocationDTO;
 import com.app.maria.domain.withdrawal.dto.WithdrawalDTO;
+import com.app.maria.domain.withdrawal.dto.WithdrawalFailureContext;
 import com.app.maria.domain.withdrawal.dto.WithdrawalResultDTO;
 import com.app.maria.domain.withdrawal.dto.request.WithdrawalRequestDTO;
-import com.app.maria.domain.withdrawal.exception.EarlyWithdrawalConsentRequiredException;
-import com.app.maria.domain.withdrawal.exception.InsufficientWithdrawalAmountException;
-import com.app.maria.domain.withdrawal.exception.WithdrawalNotAllowedException;
-import com.app.maria.domain.withdrawal.exception.WithdrawalProcessingException;
 import com.app.maria.domain.withdrawal.mapper.WithdrawalMapper;
 import com.app.maria.domain.withdrawal.type.WithdrawalStatus;
 import com.app.maria.domain.withdrawal.type.WithdrawalType;
@@ -26,6 +21,8 @@ import com.app.maria.global.client.generalaccount.GeneralAccountClient;
 import com.app.maria.global.client.generalaccount.dto.request.GeneralAccountRequestDTO;
 import com.app.maria.global.client.generalaccount.dto.response.GeneralAccountResponseDTO;
 import com.app.maria.global.clock.service.BusinessClockService;
+import com.app.maria.global.error.AppException;
+import com.app.maria.global.error.ErrorType;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -55,18 +52,22 @@ public class WithdrawalProcessor {
         BigDecimal requestedAmount = requestDTO.getRequestedAmount();
 
         if (requestedAmount.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new WithdrawalNotAllowedException("인출 요청금액은 0보다 커야 합니다.");
+            throw new AppException(ErrorType.INVALID_WITHDRAWAL_AMOUNT, requestedAmount);
         }
 
         AccountDTO accountBeforeLock =
                 accountMapper
                         .selectByAccountId(accountId)
-                        .orElseThrow(() -> new AccountNotFoundException("인출 대상 계좌가 존재하지 않습니다."));
+                        .orElseThrow(
+                                () -> new AppException(ErrorType.ACCOUNT_NOT_FOUND, accountId));
         String ciHash =
                 accountMapper
                         .selectCiHashByCustomerId(accountBeforeLock.getCustomerId())
                         .orElseThrow(
-                                () -> new AccountNotFoundException("인출 계좌의 고객 식별정보를 찾을 수 없습니다."));
+                                () ->
+                                        new AppException(
+                                                ErrorType.ACCOUNT_CUSTOMER_IDENTITY_NOT_FOUND,
+                                                accountBeforeLock.getCustomerId()));
 
         GeneralAccountRequestDTO generalAccountRequest =
                 GeneralAccountRequestDTO.builder()
@@ -76,28 +77,32 @@ public class WithdrawalProcessor {
         GeneralAccountResponseDTO destinationGeneralAccount =
                 generalAccountClient.verifyGeneralAccount(generalAccountRequest);
         if (destinationGeneralAccount.getStatus() != ACTIVE) {
-            throw new WithdrawalNotAllowedException("활성 상태의 일반계좌로만 인출할 수 있습니다.");
+            throw new AppException(
+                    ErrorType.WITHDRAWAL_DESTINATION_ACCOUNT_INACTIVE,
+                    requestDTO.getDestinationGeneralAccountId());
         }
 
         AccountDTO account =
                 accountMapper
                         .selectByAccountIdForUpdate(accountId)
-                        .orElseThrow(() -> new AccountNotFoundException("인출 대상 계좌가 존재하지 않습니다."));
+                        .orElseThrow(
+                                () -> new AppException(ErrorType.ACCOUNT_NOT_FOUND, accountId));
 
         if (account.getStatus() != allowedStatus) {
-            throw new WithdrawalNotAllowedException("현재 계좌 상태에서는 인출할 수 없습니다.");
+            throw new AppException(ErrorType.ACCOUNT_STATUS_NOT_WITHDRAWABLE, accountId);
         }
 
         LocalDateTime currentDatetime = businessClockService.now();
 
         if (account.getAmount().compareTo(requestedAmount) < 0) {
-            throw new InsufficientWithdrawalAmountException(
-                    "계좌 잔액보다 많은 금액을 인출할 수 없습니다.",
-                    accountId,
-                    requestedAmount,
-                    currentDatetime,
-                    destinationGeneralAccount.getAccountNo(),
-                    requestDTO.getDestinationGeneralAccountId());
+            throw new AppException(
+                    ErrorType.INSUFFICIENT_WITHDRAWAL_AMOUNT,
+                    new WithdrawalFailureContext(
+                            accountId,
+                            requestedAmount,
+                            currentDatetime,
+                            destinationGeneralAccount.getAccountNo(),
+                            requestDTO.getDestinationGeneralAccountId()));
         }
 
         List<LeftAmountDTO> leftAmounts =
@@ -162,7 +167,7 @@ public class WithdrawalProcessor {
 
         if (remainingRequest.compareTo(BigDecimal.ZERO) > 0) {
             if (!requestDTO.isEarlyWithdrawalAgreed()) {
-                throw new EarlyWithdrawalConsentRequiredException("미경과 원금을 인출하려면 조기인출 동의가 필요합니다.");
+                throw new AppException(ErrorType.EARLY_WITHDRAWAL_CONSENT_REQUIRED, accountId);
             }
             List<WithdrawalAllocationDTO> immatureAllocations =
                     allocateImmaturePrincipalFifo(
@@ -174,7 +179,7 @@ public class WithdrawalProcessor {
                             .reduce(BigDecimal.ZERO, BigDecimal::add);
 
             if (immatureAllocatedAmount.compareTo(remainingRequest) < 0) {
-                throw new WithdrawalNotAllowedException("인출 가능한 원금이 부족합니다.");
+                throw new AppException(ErrorType.WITHDRAWAL_SOURCE_AMOUNT_INCONSISTENT, accountId);
             }
             allocations.addAll(immatureAllocations);
             int changedBenefit = accountMapper.updateBenefitToImpossible(accountId);
@@ -192,7 +197,8 @@ public class WithdrawalProcessor {
                 int insertedLog = accountBenefitLogMapper.insertLog(benefitLog);
 
                 if (insertedLog != 1) {
-                    throw new AccountException("ACCOUNT_BENEFIT_LOG 저장에 실패했습니다.");
+                    throw new AppException(
+                            ErrorType.ACCOUNT_BENEFIT_LOG_SAVE_FAILED, account.getAccountId());
                 }
             }
         }
@@ -209,14 +215,15 @@ public class WithdrawalProcessor {
                         .build();
         int insertedRows = withdrawalMapper.insertWithdrawal(withdrawal);
         if (insertedRows != 1) {
-            throw new WithdrawalProcessingException("WITHDRAWAL 저장에 실패했습니다.");
+            throw new AppException(ErrorType.WITHDRAWAL_PROCESSING_FAILED, accountId);
         }
         // 배분내역 저장
         for (WithdrawalAllocationDTO allocation : allocations) {
             allocation.setWithdrawalId(withdrawal.getWithdrawalId());
             int insertedAllocationRows = withdrawalMapper.insertWithdrawalAllocation(allocation);
             if (insertedAllocationRows != 1) {
-                throw new WithdrawalProcessingException("WITHDRAWAL_ALLOCATION 저장에 실패했습니다.");
+                throw new AppException(
+                        ErrorType.WITHDRAWAL_PROCESSING_FAILED, withdrawal.getWithdrawalId());
             }
             // 원금 차감
             if (allocation.getLeftAmountId() != null) {
@@ -224,14 +231,15 @@ public class WithdrawalProcessor {
                         withdrawalMapper.deductLeftAmount(
                                 allocation.getLeftAmountId(), allocation.getAllocatedAmount());
                 if (deductedLeftAmountRows != 1) {
-                    throw new WithdrawalProcessingException("LEFT_AMOUNT 차감에 실패했습니다.");
+                    throw new AppException(
+                            ErrorType.WITHDRAWAL_PROCESSING_FAILED, allocation.getLeftAmountId());
                 }
             }
         }
         // RIA계좌의 총 잔액 차감
         int deductedAccountRows = withdrawalMapper.deductAccountAmount(accountId, requestedAmount);
         if (deductedAccountRows != 1) {
-            throw new WithdrawalProcessingException("ACCOUNT 총 잔액을 차감하지 못했습니다.");
+            throw new AppException(ErrorType.WITHDRAWAL_PROCESSING_FAILED, accountId);
         }
 
         // 인출 상태 변경
@@ -239,7 +247,8 @@ public class WithdrawalProcessor {
                 withdrawalMapper.updateWithdrawalStatus(
                         withdrawal.getWithdrawalId(), WithdrawalStatus.COMPLETED);
         if (updatedStatusRows != 1) {
-            throw new WithdrawalProcessingException("인출 상태 변경에 실패했습니다.");
+            throw new AppException(
+                    ErrorType.WITHDRAWAL_PROCESSING_FAILED, withdrawal.getWithdrawalId());
         }
 
         return WithdrawalResultDTO.builder()
@@ -308,25 +317,5 @@ public class WithdrawalProcessor {
         }
 
         return allocations;
-    }
-
-    public boolean hasImmaturePrincipal(Long accountId) {
-        return getImmaturePrincipalAmount(accountId).compareTo(BigDecimal.ZERO) > 0;
-    }
-
-    public BigDecimal getImmaturePrincipalAmount(Long accountId) {
-        List<LeftAmountDTO> leftAmounts =
-                withdrawalMapper.selectAvailableLeftAmountsByAccountId(accountId);
-
-        LocalDateTime currentDatetime = businessClockService.now();
-
-        return leftAmounts.stream()
-                .filter(leftAmount -> leftAmount.getFinalAt().plusYears(1).isAfter(currentDatetime))
-                .map(LeftAmountDTO::getCurAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-    }
-
-    public BigDecimal getImmatureAllocatedAmount(Long withdrawalId) {
-        return withdrawalMapper.selectImmatureAllocatedAmountByWithdrawalId(withdrawalId);
     }
 }

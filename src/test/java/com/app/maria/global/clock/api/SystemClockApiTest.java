@@ -10,12 +10,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.app.maria.global.audit.exception.AuditLogInsertException;
 import com.app.maria.global.clock.dto.request.SystemClockChangeRequestDTO;
-import com.app.maria.global.clock.exception.SystemClockNotInitializedException;
-import com.app.maria.global.clock.exception.SystemClockUpdateException;
 import com.app.maria.global.clock.service.BusinessClockService;
 import com.app.maria.global.clock.service.SystemClockManagementService;
+import com.app.maria.global.error.AppException;
+import com.app.maria.global.error.ErrorType;
 import com.app.maria.global.exception.GlobalExceptionHandler;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import java.time.LocalDateTime;
@@ -145,11 +144,13 @@ class SystemClockApiTest {
     @Test
     void 시스템_Clock이_초기화되지_않으면_조회_API는_500을_반환한다() throws Exception {
         when(businessClockService.now())
-                .thenThrow(new SystemClockNotInitializedException("SYSTEM_CLOCK 데이터가 존재하지 않습니다."));
+                .thenThrow(new AppException(ErrorType.SYSTEM_CLOCK_NOT_INITIALIZED));
 
         mockMvc.perform(get("/api/admin/system-clock"))
                 .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$.message").value("SYSTEM_CLOCK 데이터가 존재하지 않습니다."));
+                .andExpect(
+                        jsonPath("$.message")
+                                .value(ErrorType.SYSTEM_CLOCK_NOT_INITIALIZED.getMessage()));
 
         verify(businessClockService).now();
         verifyNoInteractions(systemClockManagementService);
@@ -159,11 +160,13 @@ class SystemClockApiTest {
     void 다른_관리자가_먼저_시간을_변경하면_변경_API는_409를_반환한다() throws Exception {
         when(systemClockManagementService.changeSystemTime(
                         eq(4L), any(SystemClockChangeRequestDTO.class)))
-                .thenThrow(new SystemClockUpdateException("다른 관리자가 업무시각을 먼저 변경했습니다. 다시 조회해 주세요."));
+                .thenThrow(new AppException(ErrorType.SYSTEM_CLOCK_UPDATE_CONFLICT));
 
         mockMvc.perform(clockChangeRequest())
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.message").value("다른 관리자가 업무시각을 먼저 변경했습니다. 다시 조회해 주세요."));
+                .andExpect(
+                        jsonPath("$.message")
+                                .value(ErrorType.SYSTEM_CLOCK_UPDATE_CONFLICT.getMessage()));
 
         verify(systemClockManagementService)
                 .changeSystemTime(eq(4L), any(SystemClockChangeRequestDTO.class));
@@ -174,11 +177,13 @@ class SystemClockApiTest {
     void 감사로그_저장에_실패하면_변경_API는_500을_반환한다() throws Exception {
         when(systemClockManagementService.changeSystemTime(
                         eq(4L), any(SystemClockChangeRequestDTO.class)))
-                .thenThrow(new AuditLogInsertException("AUDIT_LOG 저장에 실패했습니다."));
+                .thenThrow(new AppException(ErrorType.AUDIT_LOG_INSERT_FAILED));
 
         mockMvc.perform(clockChangeRequest())
                 .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$.message").value("AUDIT_LOG 저장에 실패했습니다."));
+                .andExpect(
+                        jsonPath("$.message")
+                                .value(ErrorType.AUDIT_LOG_INSERT_FAILED.getMessage()));
 
         verify(systemClockManagementService)
                 .changeSystemTime(eq(4L), any(SystemClockChangeRequestDTO.class));

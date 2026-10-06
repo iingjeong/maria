@@ -2,13 +2,13 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
 <mapper namespace="com.app.maria.domain.tax.mapper.TaxMapper">
 
-    <select id="findFinalizedLotsByAccountIdsAndYear" resultType="SellLotDTO">
+    <select id="selectFinalizedLotsByAccountIdsAndYear" resultType="SellLotDTO">
         select
             ke.account_id,
             so.order_id,
             so.inbound_detail_id,
             ke.final_amount,
-            ke.final_at as sell_at,
+            ke.final_at,
             so.sell_qty,
             id.purchase_fx_rate,
             id.purchase_price,
@@ -27,7 +27,7 @@
             and #{calcBaseTime} >= ke.final_at
     </select>
 
-    <select id="findTaxRules" resultType="TaxRuleDTO">
+    <select id="selectTaxRules" resultType="TaxRuleDTO">
         select
             rule_id,
             rule_type,
@@ -37,7 +37,7 @@
         from tax_rule
     </select>
 
-    <select id="findExternalBuysByAccountIdsAndYear" resultType="ExternalBuyDTO">
+    <select id="selectExternalBuysByAccountIdsAndYear" resultType="ExternalBuyDTO">
         select
             a.account_id,
             tpj.trade_date,
@@ -73,7 +73,7 @@
         )
     </select>
 
-    <select id="findLatestCalculation" resultType="TaxCalculationDTO">
+    <select id="selectLatestCalculation" resultType="TaxCalculationDTO">
         select
             calc_id,
             account_id,
@@ -90,6 +90,51 @@
         where account_id = #{accountId}
         order by calculated_at desc, calc_id desc
         limit 1
+    </select>
+
+    <select id="selectHeldLotsByAccountId" resultType="HeldLotDTO">
+        select
+            id.inbound_detail_id,
+            id.foreign_product_id,
+            fp.ticker,
+            fp.market,
+            fp.currency,
+            id.purchase_fx_rate,
+            id.purchase_price,
+            id.current_qty,
+            concat(fp.ticker, ' ', fp.name) as product_label
+        from inbound_detail id
+        join inbound i on i.inbound_id = id.inbound_id
+        join foreign_product fp on fp.foreign_product_id = id.foreign_product_id
+        where i.account_id = #{accountId}
+            and id.current_qty > 0
+    </select>
+
+    <select id="countUnconfirmedFinalReport" resultType="int">
+        select count(*)
+        from tax_snapshot ts
+        where ts.final_tax > 0
+            and not exists (
+                select 1 from tax_calculation tc
+                where tc.account_id = ts.account_id and tc.basis_type = 'FINAL_REPORT'
+            )
+    </select>
+
+    <select id="countUnprocessedClawback" resultType="int">
+        select count(*)
+        from account a
+        join tax_calculation tc on tc.account_id = a.account_id and tc.basis_type = 'FINAL_REPORT'
+        where a.benefit = 'IMPOSSIBLE'
+            and not exists (
+                select 1 from tax_calculation tc2
+                where tc2.account_id = a.account_id and tc2.basis_type = 'EARLY_WITHDRAWAL_CLAWBACK'
+            )
+    </select>
+
+    <select id="countBenefitChangedSince" resultType="int">
+        select count(distinct account_id)
+        from account_benefit_log
+        where changed_at between #{since} and #{until}
     </select>
 
 </mapper>
