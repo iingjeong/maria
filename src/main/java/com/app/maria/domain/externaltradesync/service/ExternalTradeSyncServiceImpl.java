@@ -13,13 +13,16 @@ import com.app.maria.domain.targetproduct.mapper.TargetProductMapper;
 import com.app.maria.domain.targetproduct.service.TargetProductService;
 import com.app.maria.global.client.mydatatrade.MydataTradeClient;
 import com.app.maria.global.clock.service.BusinessClockService;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Slf4j
@@ -34,7 +37,8 @@ public class ExternalTradeSyncServiceImpl implements ExternalTradeSyncService {
     private final TargetProductService targetProductService;
     private final BusinessClockService businessClockService;
 
-    private static final int MAX_JUDGE_FAILURE_COUNT = 3;
+    @Value("${custom.external-trade-sync.max-judge-failure-days:3}")
+    private int maxJudgeFailureDays;
 
     private enum JudgeOutcome {
         NEW,
@@ -137,43 +141,50 @@ public class ExternalTradeSyncServiceImpl implements ExternalTradeSyncService {
     }
 
     private JudgeResult judgeTrade(MydataTradeResponseDTO trade) {
+        Optional<TargetProductJudgementFailureDTO> existingFailure =
+                targetProductMapper.selectFailureByMydataTradeId(trade.getTradeId());
+        if (existingFailure.map(this::isPermanentlyFailed).orElse(false)) {
+            return new JudgeResult(JudgeOutcome.PERMANENTLY_FAILED, null);
+        }
         try {
             if (targetProductMapper.existsByMydataTradeId(trade.getTradeId())) {
                 return new JudgeResult(JudgeOutcome.SKIPPED, null);
             }
             TargetProductJudgementDTO judged = targetProductService.judge(trade);
+            if (existingFailure.isPresent()) {
+                targetProductMapper.deleteFailureByMydataTradeId(trade.getTradeId());
+            }
             return new JudgeResult(JudgeOutcome.NEW, judged.getJudgementId());
         } catch (Exception e) {
             log.warn("거래 판정 실패. tradeId={}", trade.getTradeId(), e);
-            return recordFailure(trade, e);
+            recordFailure(trade, e);
+            return new JudgeResult(JudgeOutcome.FAILED, null);
         }
     }
 
-    private JudgeResult recordFailure(MydataTradeResponseDTO trade, Exception e) {
-        int previousCount =
-                targetProductMapper
-                        .selectFailureByMydataTradeId(trade.getTradeId())
-                        .map(TargetProductJudgementFailureDTO::getFailureCount)
-                        .orElse(0);
-        int newCount = previousCount + 1;
+    private boolean isPermanentlyFailed(TargetProductJudgementFailureDTO failure) {
+        long daysSinceFirstFailure =
+                Duration.between(failure.getFirstFailedAt(), businessClockService.now()).toDays();
+        return daysSinceFirstFailure >= maxJudgeFailureDays;
+    }
+
+    private void recordFailure(MydataTradeResponseDTO trade, Exception e) {
         LocalDateTime now = businessClockService.now();
         targetProductMapper.upsertFailure(
                 TargetProductJudgementFailureDTO.builder()
                         .mydataTradeId(trade.getTradeId())
                         .ciHash(trade.getCiHash())
                         .tradeDate(trade.getTradeDate())
-                        .failureCount(newCount)
-                        .lastError(e.getMessage())
+                        .lastError(truncate(e.getMessage(), 500))
                         .firstFailedAt(now)
                         .lastFailedAt(now)
                         .build());
-        if (newCount >= MAX_JUDGE_FAILURE_COUNT) {
-            log.warn(
-                    "거래 판정 {}회 연속 실패, 영구실패 처리하고 커서를 넘깁니다. tradeId={}",
-                    newCount,
-                    trade.getTradeId());
-            return new JudgeResult(JudgeOutcome.PERMANENTLY_FAILED, null);
+    }
+
+    private static String truncate(String message, int maxLength) {
+        if (message == null || message.length() <= maxLength) {
+            return message;
         }
-        return new JudgeResult(JudgeOutcome.FAILED, null);
+        return message.substring(0, maxLength);
     }
 }

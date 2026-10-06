@@ -36,6 +36,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class ExternalTradeSyncServiceImplTest {
@@ -58,6 +59,9 @@ class ExternalTradeSyncServiceImplTest {
 
     @BeforeEach
     void setUpClock() {
+        // @InjectMocks는 @Value 필드를 채워주지 않아 기본값(0)으로 남는다 -> 모든 기존
+        // 실패가 즉시 영구실패로 판정돼버리므로 운영값(application.yaml)과 맞춰 직접 주입한다.
+        ReflectionTestUtils.setField(externalTradeSyncService, "maxJudgeFailureDays", 3);
         // 대부분의 테스트가 syncCustomer()를 거쳐 now()를 호출하지만,
         // 고객이 아예 없는 테스트(syncAllDoesNothingWhenNoCustomers)는 호출하지 않으므로 lenient 처리
         lenient().when(businessClockService.now()).thenReturn(TODAY.atStartOfDay());
@@ -66,6 +70,12 @@ class ExternalTradeSyncServiceImplTest {
         lenient()
                 .when(targetProductService.judge(any()))
                 .thenReturn(TargetProductJudgementDTO.builder().judgementId(1L).build());
+        // judgeTrade()가 매 거래마다 먼저 실패 기록을 조회하므로, 실패 이력이 없는 거래를
+        // 다루는 대다수 테스트가 매번 스텁하지 않도록 기본값을 비워둔다(Mockito 기본값은
+        // Optional이 아니라 null이라 안 비워두면 existingFailure.map(...)에서 NPE가 난다).
+        lenient()
+                .when(targetProductMapper.selectFailureByMydataTradeId(anyLong()))
+                .thenReturn(Optional.empty());
     }
 
     private static CustomerCiHashDTO customer(Long customerId, String ciHash) {
@@ -314,31 +324,27 @@ class ExternalTradeSyncServiceImplTest {
     }
 
     @Test
-    @DisplayName("거래 판정이 임계치(3회)만큼 반복 실패하면 영구실패로 처리하고 커서를 넘긴다")
-    void tradeExceedingMaxFailureCountIsPermanentlyFailedAndCursorAdvances() {
+    @DisplayName("최초 실패로부터 임계치(3일) 경과한 거래는 재시도 없이 영구실패로 처리하고, 커서 전진과 결과 집계에 반영된다")
+    void tradeFailingSinceBeyondThresholdDaysIsPermanentlyFailedWithoutRetryAndCursorAdvances() {
         MydataTradeResponseDTO failing = trade(100L, "FUND", "BADCODE", LocalDate.of(2026, 3, 20));
 
         when(customerMapper.selectActiveRiaCustomers()).thenReturn(List.of(customer(1L, "ci-1")));
         when(cursorMapper.selectByCustomerId(1L)).thenReturn(Optional.empty());
         when(mydataTradeClient.getTrades(any())).thenReturn(List.of(failing));
-        when(targetProductMapper.existsByMydataTradeId(100L)).thenReturn(false);
-        when(targetProductService.judge(failing))
-                .thenThrow(new RuntimeException("mydata 펀드 조회 실패"));
-        // 이미 2번 실패한 상태에서 이번이 3번째 실패
+        // 최초 실패로부터 이미 3일 경과 -> judge()를 다시 시도하지 않고 바로 영구실패 처리된다
         when(targetProductMapper.selectFailureByMydataTradeId(100L))
                 .thenReturn(
                         Optional.of(
                                 TargetProductJudgementFailureDTO.builder()
                                         .mydataTradeId(100L)
-                                        .failureCount(2)
+                                        .firstFailedAt(TODAY.minusDays(3).atStartOfDay())
                                         .build()));
 
-        externalTradeSyncService.syncAll();
+        var result = externalTradeSyncService.syncAll();
 
-        ArgumentCaptor<TargetProductJudgementFailureDTO> failureCaptor =
-                ArgumentCaptor.forClass(TargetProductJudgementFailureDTO.class);
-        verify(targetProductMapper).upsertFailure(failureCaptor.capture());
-        assertThat(failureCaptor.getValue().getFailureCount()).isEqualTo(3);
+        verify(targetProductService, never()).judge(any());
+        verify(targetProductMapper, never()).upsertFailure(any());
+        verify(targetProductMapper, never()).existsByMydataTradeId(anyLong());
 
         // 영구실패 처리라 더 이상 재시도 대상이 아니므로, 커서가 이 거래일까지 전진해야 한다
         ArgumentCaptor<ExternalTradeSyncCursorDTO> cursorCaptor =
@@ -346,11 +352,14 @@ class ExternalTradeSyncServiceImplTest {
         verify(cursorMapper).upsertCursor(cursorCaptor.capture());
         assertThat(cursorCaptor.getValue().getLastSyncedTradeDate())
                 .isEqualTo(LocalDate.of(2026, 3, 20));
+
+        assertThat(result.getPermanentlyFailedJudgementCount()).isEqualTo(1);
+        assertThat(result.getSkippedJudgementCount()).isEqualTo(0);
     }
 
     @Test
-    @DisplayName("영구실패 건수는 syncAll() 결과의 permanentlyFailedJudgementCount로 집계된다")
-    void syncAllCountsPermanentlyFailedJudgements() {
+    @DisplayName("최초 실패로부터 임계치(3일) 미경과면 영구실패 처리하지 않고 judge()를 다시 시도한다")
+    void failureWithinThresholdDaysIsStillRetried() {
         MydataTradeResponseDTO failing = trade(100L, "FUND", "BADCODE", LocalDate.of(2026, 3, 20));
 
         when(customerMapper.selectActiveRiaCustomers()).thenReturn(List.of(customer(1L, "ci-1")));
@@ -364,13 +373,52 @@ class ExternalTradeSyncServiceImplTest {
                         Optional.of(
                                 TargetProductJudgementFailureDTO.builder()
                                         .mydataTradeId(100L)
-                                        .failureCount(2)
+                                        .firstFailedAt(TODAY.minusDays(1).atStartOfDay())
                                         .build()));
 
-        var result = externalTradeSyncService.syncAll();
+        externalTradeSyncService.syncAll();
 
-        assertThat(result.getPermanentlyFailedJudgementCount()).isEqualTo(1);
-        assertThat(result.getSkippedJudgementCount()).isEqualTo(0);
+        verify(targetProductService).judge(failing);
+        verify(cursorMapper, never()).upsertCursor(any());
+    }
+
+    @Test
+    @DisplayName("이전에 실패했던 거래가 재시도에서 성공하면 실패 기록을 삭제한다")
+    void successAfterPriorFailureDeletesFailureRecord() {
+        MydataTradeResponseDTO recovered =
+                trade(100L, "FOREIGN_STOCK", null, LocalDate.of(2026, 3, 5));
+
+        when(customerMapper.selectActiveRiaCustomers()).thenReturn(List.of(customer(1L, "ci-1")));
+        when(cursorMapper.selectByCustomerId(1L)).thenReturn(Optional.empty());
+        when(mydataTradeClient.getTrades(any())).thenReturn(List.of(recovered));
+        when(targetProductMapper.existsByMydataTradeId(100L)).thenReturn(false);
+        when(targetProductMapper.selectFailureByMydataTradeId(100L))
+                .thenReturn(
+                        Optional.of(
+                                TargetProductJudgementFailureDTO.builder()
+                                        .mydataTradeId(100L)
+                                        .firstFailedAt(TODAY.minusDays(1).atStartOfDay())
+                                        .build()));
+
+        externalTradeSyncService.syncAll();
+
+        verify(targetProductMapper).deleteFailureByMydataTradeId(100L);
+    }
+
+    @Test
+    @DisplayName("실패 이력이 없던 거래가 성공하면 실패 기록 삭제를 호출하지 않는다")
+    void successWithoutPriorFailureDoesNotCallDelete() {
+        MydataTradeResponseDTO succeeding =
+                trade(100L, "FOREIGN_STOCK", null, LocalDate.of(2026, 3, 5));
+
+        when(customerMapper.selectActiveRiaCustomers()).thenReturn(List.of(customer(1L, "ci-1")));
+        when(cursorMapper.selectByCustomerId(1L)).thenReturn(Optional.empty());
+        when(mydataTradeClient.getTrades(any())).thenReturn(List.of(succeeding));
+        when(targetProductMapper.existsByMydataTradeId(100L)).thenReturn(false);
+
+        externalTradeSyncService.syncAll();
+
+        verify(targetProductMapper, never()).deleteFailureByMydataTradeId(anyLong());
     }
 
     @Test
