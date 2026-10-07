@@ -13,6 +13,8 @@ import com.app.maria.domain.targetproduct.type.StockType;
 import com.app.maria.domain.targetproduct.type.TradeType;
 import com.app.maria.global.client.mydatafund.MydataFundClient;
 import com.app.maria.global.clock.service.BusinessClockService;
+import com.app.maria.global.error.AppException;
+import com.app.maria.global.error.ErrorType;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -47,6 +49,11 @@ public class TargetProductServiceImpl implements TargetProductService {
 
         if (stockType == StockType.FUND) {
             MydataFundResponseDTO fund = mydataFundClient.getFund(trade.getFundCode());
+
+            if (fund == null) {
+                throw new AppException(
+                        ErrorType.TARGET_PRODUCT_FUND_NOT_FOUND, trade.getFundCode());
+            }
 
             if (fund.getForeignStockRatio() != null) {
                 foreignStockRatio = fund.getForeignStockRatio();
