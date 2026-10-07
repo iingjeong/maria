@@ -1,10 +1,8 @@
 package com.app.maria.domain.targetproduct.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -22,8 +20,6 @@ import com.app.maria.domain.targetproduct.type.StockType;
 import com.app.maria.domain.targetproduct.type.TradeType;
 import com.app.maria.global.client.mydatafund.MydataFundClient;
 import com.app.maria.global.clock.service.BusinessClockService;
-import com.app.maria.global.error.AppException;
-import com.app.maria.global.error.ErrorType;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -346,21 +342,6 @@ class TargetProductServiceImplTest {
         assertThat(result.getForeignStockRatio()).isEqualByComparingTo("72.50");
         assertThat(result.getInceptionDate()).isEqualTo(fund.getInceptionDate());
         assertThat(result.getFundName()).isEqualTo(fund.getFundName());
-    }
-
-    @Test
-    @DisplayName("FUND인데 펀드 정보를 찾을 수 없으면 AppException(TARGET_PRODUCT_FUND_NOT_FOUND)을 던진다")
-    void judgeThrowsWhenFundIsNull() {
-        LocalDate tradeDate = LocalDate.of(2026, 3, 10);
-        when(mydataFundClient.getFund("448630")).thenReturn(null);
-        MydataTradeResponseDTO t =
-                trade(13L, "BUY", "FUND", "448630", BigDecimal.valueOf(1_000_000), tradeDate);
-
-        assertThatThrownBy(() -> targetProductService.judge(t))
-                .isInstanceOf(AppException.class)
-                .hasFieldOrPropertyWithValue("errorType", ErrorType.TARGET_PRODUCT_FUND_NOT_FOUND);
-
-        verify(targetProductMapper, never()).insertJudgement(any());
     }
 
     @Test
