@@ -13,6 +13,7 @@ import com.app.maria.global.error.ErrorType;
 import com.app.maria.global.response.ApiResponseDTO;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.stream.Stream;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.ParameterizedTypeReference;
@@ -82,19 +83,20 @@ public class DomesticInvestmentServiceImpl implements DomesticInvestmentService 
     }
 
     private List<Long> resolveUnpurchasableAccountIds() {
-        return findUnpurchasableFundHoldings().stream()
+        return findUnpurchasableFundHoldings()
                 .map(DomesticFundHoldingDetailDTO::getAccountId)
                 .distinct()
                 .toList();
     }
 
-    private List<DomesticFundHoldingDetailDTO> findUnpurchasableFundHoldings() {
+    private Stream<DomesticFundHoldingDetailDTO> findUnpurchasableFundHoldings() {
         return domesticStockBalanceMapper.selectActiveFundHoldings().stream()
                 .filter(
                         h ->
                                 !domesticPurchaseEligibilityService.isPurchasable(
-                                        Type.FUND, h.getDomesticStockRatio(), h.getInceptionDate()))
-                .toList();
+                                        Type.FUND,
+                                        h.getDomesticStockRatio(),
+                                        h.getInceptionDate()));
     }
 
     @Override
@@ -151,7 +153,7 @@ public class DomesticInvestmentServiceImpl implements DomesticInvestmentService 
         DomesticInvestmentSummaryDTO stats =
                 domesticStockBalanceMapper.selectSummaryStats(sinceDate);
 
-        int unpurchasableCount = findUnpurchasableFundHoldings().size();
+        int unpurchasableCount = (int) findUnpurchasableFundHoldings().count();
 
         return new DomesticInvestmentSummaryResponseDTO(
                 DomesticInvestmentSummaryDTO.builder()
@@ -171,7 +173,7 @@ public class DomesticInvestmentServiceImpl implements DomesticInvestmentService 
 
     @Override
     public List<DomesticUnpurchasableHoldingResponseDTO> getUnpurchasableHoldings() {
-        return findUnpurchasableFundHoldings().stream()
+        return findUnpurchasableFundHoldings()
                 .map(DomesticUnpurchasableHoldingResponseDTO::new)
                 .toList();
     }
